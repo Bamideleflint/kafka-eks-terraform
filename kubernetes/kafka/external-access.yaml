@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-external
+  namespace: kafka
+  labels:
+    app: kafka
+spec:
+  type: LoadBalancer
+  selector:
+    strimzi.io/cluster: kafka
+    strimzi.io/kind: Kafka
+    strimzi.io/name: kafka-kafka
+  ports:
+  - name: kafka-external
+    port: 9094
+    targetPort: 9094
+    protocol: TCP
+  sessionAffinity: None
+  externalTrafficPolicy: Cluster

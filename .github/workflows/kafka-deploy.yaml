@@ -1,0 +1,210 @@
+---
+name: Deploy Kafka
+
+on:
+  workflow_run:
+    workflows: ["Terraform Apply"]
+    types:
+      - completed
+  workflow_dispatch:
+
+env:
+  TF_VERSION: "1.9.0"
+  AWS_REGION: "us-east-1"
+  CLUSTER_NAME: "kafka-eks"
+  AWS_ACCOUNT_ID: "248982879830"
+
+jobs:
+  deploy:
+    name: Deploy Kafka
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Debug - Show Environment
+        run: |
+          echo "=== Environment Variables ==="
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+          echo "AWS Account ID: ${{ env.AWS_ACCOUNT_ID }}"
+          echo "Cluster Name: ${{ env.CLUSTER_NAME }}"
+          echo "Workflow Run Conclusion: ${{ github.event.workflow_run.conclusion }}"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/GitHubActionsKafkaDeployRole
+          role-session-name: github-actions-${{ github.sha }}
+        continue-on-error: false
+
+      - name: Debug - Verify AWS Credentials
+        run: |
+          echo "=== AWS Credentials Verification ==="
+          echo "Verifying AWS credentials..."
+          aws sts get-caller-identity
+          if [ $? -eq 0 ]; then
+            echo "✅ AWS credentials are valid"
+          else
+            echo "❌ Failed to get caller identity"
+            exit 1
+          fi
+
+      - name: Check Role Existence
+        run: |
+          echo "=== Role Existence Check ==="
+          echo "Checking if role exists..."
+          aws iam get-role --role-name GitHubActionsKafkaDeployRole
+          if [ $? -eq 0 ]; then
+            echo "✅ Role exists"
+          else
+            echo "❌ Role does not exist or cannot be accessed"
+            exit 1
+          fi
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "latest"
+
+      - name: Update kubeconfig with AWS credentials
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      - name: Wait for Kubernetes Cluster
+        run: |
+          timeout=600
+          interval=30
+          elapsed=0
+
+          while [ $elapsed -lt $timeout ]; do
+            if kubectl cluster-info >/dev/null 2>&1; then
+              echo "✅ Kubernetes cluster is ready"
+              kubectl get nodes
+              break
+            fi
+            echo "⏳ Waiting for Kubernetes cluster to be ready... ($elapsed/$timeout seconds elapsed)"
+            sleep $interval
+            elapsed=$((elapsed + interval))
+          done
+
+          if [ $elapsed -ge $timeout ]; then
+            echo "⚠️ Timeout waiting for Kubernetes cluster to be ready"
+            exit 1
+          fi
+
+      - name: Install Strimzi Operator
+        run: |
+          # Install Strimzi operator and CRDs
+          kubectl create namespace kafka --dry-run=client -o yaml | kubectl apply -f -
+          curl -L https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.39.0/strimzi-cluster-operator-0.39.0.yaml | sed 's/namespace: .*/namespace: kafka/' | kubectl apply -f - -n kafka
+
+      - name: Wait for Strimzi Operator to be ready
+        run: |
+          timeout=300
+          interval=30
+          elapsed=0
+
+          while [ $elapsed -lt $timeout ]; do
+            if kubectl get deployment strimzi-cluster-operator -n kafka >/dev/null 2>&1; then
+              if kubectl rollout status deployment strimzi-cluster-operator -n kafka --timeout=10s >/dev/null 2>&1; then
+                echo "✅ Strimzi operator is ready"
+                kubectl get pods -n kafka
+                break
+              fi
+            fi
+            echo "⏳ Waiting for Strimzi operator to be ready... ($elapsed/$timeout seconds elapsed)"
+            sleep $interval
+            elapsed=$((elapsed + interval))
+          done
+
+          if [ $elapsed -ge $timeout ]; then
+            echo "⚠️ Timeout waiting for Strimzi operator to be ready"
+            kubectl get pods -n kafka
+            exit 1
+          fi
+
+      - name: Check and Set Default Storage Class
+        run: |
+          echo "Available Storage Classes:"
+          kubectl get storageclass
+
+          # Check if there's already a default storage class
+          default_sc=$(kubectl get storageclass | grep "(default)" | awk '{print $1}')
+          if [ -n "$default_sc" ]; then
+            echo "Default storage class already exists: $default_sc"
+            if [ "$default_sc" != "gp2" ]; then
+              echo "Removing default annotation from $default_sc"
+              kubectl patch storageclass $default_sc -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+            fi
+          fi
+
+          # Set gp2 as the default storage class
+          echo "Setting gp2 as default storage class"
+          kubectl patch storageclass gp2 -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+
+      - name: Apply Kubernetes manifests
+        run: |
+          # Create namespace
+          kubectl apply -f kubernetes/namespaces/
+
+          # Apply storage class (this will now be the default)
+          kubectl apply -f kubernetes/storage/
+
+          # Wait for storage class to be available
+          sleep 10
+
+          # Apply Strimzi Kafka cluster
+          kubectl apply -f kubernetes/kafka/strimzi/
+
+          # Apply monitoring
+          kubectl apply -f kubernetes/monitoring/
+
+      - name: Debug - Check PVC Status
+        run: |
+          echo "Checking for PersistentVolumeClaims..."
+          sleep 30  # Give time for PVCs to be created
+          kubectl get pvc -n kafka || echo "No PVCs found yet"
+          kubectl get pods -n kafka
+
+      - name: Wait for Kafka cluster to be ready
+        run: |
+          timeout=900
+          interval=30
+          elapsed=0
+
+          while [ $elapsed -lt $timeout ]; do
+            if kubectl get kafka kafka -n kafka >/dev/null 2>&1; then
+              if kubectl get kafka kafka -n kafka -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' | grep -q "True"; then
+                echo "✅ Kafka cluster is ready"
+                kubectl get pods -n kafka
+                break
+              fi
+            fi
+            echo "⏳ Waiting for Kafka cluster to be ready... ($elapsed/$timeout seconds elapsed)"
+            # Add more detailed debugging
+            kubectl get pods -n kafka
+            kubectl get pvc -n kafka || echo "No PVCs found"
+            sleep $interval
+            elapsed=$((elapsed + interval))
+          done
+
+          if [ $elapsed -ge $timeout ]; then
+            echo "⚠️ Timeout waiting for Kafka cluster to be ready"
+            kubectl get kafka kafka -n kafka -o yaml
+            kubectl get pods -n kafka
+            kubectl get pvc -n kafka || echo "No PVCs found"
+            # Describe pods for more details
+            kubectl describe pods -n kafka
+            exit 1
+          fi

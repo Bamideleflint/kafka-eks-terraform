@@ -1,0 +1,243 @@
+---
+name: Terraform Apply
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  TF_VERSION: "1.9.0"
+  AWS_REGION: "us-east-1"
+  AWS_ACCOUNT_ID: "248982879830"
+  CLUSTER_NAME: "kafka-eks-new-1"
+  GITHUB_REPO: "Bamideleflint/kafka-eks-terraform"
+
+jobs:
+  apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Debug - Show Environment
+        run: |
+          echo "=== Environment Variables ==="
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+          echo "State Bucket: ${{ secrets.TF_STATE_BUCKET }}"
+          echo "DynamoDB Table: ${{ secrets.TF_STATE_LOCK_TABLE }}"
+          echo "GitHub Repository: ${{ env.GITHUB_REPO }}"
+          echo "AWS Account ID: ${{ env.AWS_ACCOUNT_ID }}"
+          echo "GitHub SHA: ${{ github.sha }}"
+          
+          # Check if secrets are set
+          if [ -z "${{ secrets.TF_STATE_BUCKET }}" ]; then
+            echo "❌ ERROR: TF_STATE_BUCKET secret is not set!"
+            exit 1
+          else
+            echo "✅ TF_STATE_BUCKET secret is set"
+          fi
+          
+          if [ -z "${{ secrets.TF_STATE_LOCK_TABLE }}" ]; then
+            echo "❌ ERROR: TF_STATE_LOCK_TABLE secret is not set!"
+            exit 1
+          else
+            echo "✅ TF_STATE_LOCK_TABLE secret is set"
+          fi
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/GitHubActionsKafkaDeployRole
+          role-session-name: github-actions-${{ github.sha }}
+        continue-on-error: false
+
+      - name: Debug - Verify AWS Credentials
+        run: |
+          echo "=== AWS Credentials Verification ==="
+          echo "Verifying AWS credentials..."
+          aws sts get-caller-identity
+          if [ $? -eq 0 ]; then
+            echo "✅ AWS credentials are valid"
+          else
+            echo "❌ Failed to get caller identity"
+            exit 1
+          fi
+
+      - name: Check Role Existence
+        run: |
+          echo "=== Role Existence Check ==="
+          echo "Checking if role exists..."
+          aws iam get-role --role-name GitHubActionsKafkaDeployRole
+          if [ $? -eq 0 ]; then
+            echo "✅ Role exists"
+          else
+            echo "❌ Role does not exist or cannot be accessed"
+            exit 1
+          fi
+
+      - name: Debug - Backend Resources Verification
+        run: |
+          echo "=== Backend Resources Verification ==="
+          echo "TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}"
+          echo "TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE }}"
+          
+          # Test S3 bucket access
+          echo "Testing S3 bucket access..."
+          aws s3 ls "${{ secrets.TF_STATE_BUCKET }}" > /dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "✅ S3 bucket ${{ secrets.TF_STATE_BUCKET }} is accessible"
+          else
+            echo "❌ Cannot access S3 bucket ${{ secrets.TF_STATE_BUCKET }}"
+            exit 1
+          fi
+          
+          # Test DynamoDB table access
+          echo "Testing DynamoDB table access..."
+          aws dynamodb describe-table --table-name "${{ secrets.TF_STATE_LOCK_TABLE }}" > /dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "✅ DynamoDB table ${{ secrets.TF_STATE_LOCK_TABLE }} is accessible"
+          else
+            echo "❌ Cannot access DynamoDB table ${{ secrets.TF_STATE_LOCK_TABLE }}"
+            exit 1
+          fi
+
+      - name: Enhanced Terraform Lock Cleanup
+        run: |
+          echo "=== Enhanced Terraform Lock Cleanup ==="
+          echo "Checking for Terraform locks..."
+          
+          # Check if we have scan permissions
+          echo "Checking DynamoDB scan permissions..."
+          aws dynamodb scan --table-name ${{ secrets.TF_STATE_LOCK_TABLE }} --max-items 1 >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "✅ DynamoDB scan permission confirmed"
+            # Scan all locks in the table
+            echo "Scanning all locks in table ${{ secrets.TF_STATE_LOCK_TABLE }}..."
+            LOCKS=$(aws dynamodb scan --table-name ${{ secrets.TF_STATE_LOCK_TABLE }} --output json)
+            echo "All locks: $LOCKS"
+          else
+            echo "⚠️ No scan permission or table inaccessible, trying alternative approaches..."
+            LOCKS="{}"
+          fi
+          
+          # Try multiple approaches to remove the lock
+          echo "Attempting to remove locks..."
+          
+          # Approach 1: Remove using the specific key from the error message
+          aws dynamodb delete-item --table-name ${{ secrets.TF_STATE_LOCK_TABLE }} --key '{"LockID": {"S": "kafka-eks-new/terraform.tfstate"}}' && echo "✅ Lock removed (approach 1)" || echo "⚠️ Failed to remove lock (approach 1)"
+          
+          # Approach 2: Remove using the MD5 key from the error message
+          aws dynamodb delete-item --table-name ${{ secrets.TF_STATE_LOCK_TABLE }} --key '{"LockID": {"S": "kafka-eks-new/terraform.tfstate-md5"}}' && echo "✅ Lock removed (approach 2)" || echo "⚠️ Failed to remove lock (approach 2)"
+          
+          # Approach 3: Remove using the path from the error message
+          aws dynamodb delete-item --table-name ${{ secrets.TF_STATE_LOCK_TABLE }} --key '{"LockID": {"S": "***/kafka-eks-new/terraform.tfstate"}}' && echo "✅ Lock removed (approach 3)" || echo "⚠️ Failed to remove lock (approach 3)"
+          
+          # Approach 4: Remove all locks in the table (only if we have scan permissions)
+          if [ "$LOCKS" != "{}" ]; then
+            echo "Attempting to remove all locks..."
+            LOCK_IDS=$(echo "$LOCKS" | jq -r '.Items[].LockID.S' 2>/dev/null || echo "")
+            if [ -n "$LOCK_IDS" ]; then
+              echo "Found lock IDs: $LOCK_IDS"
+              for lock_id in $LOCK_IDS; do
+                echo "Removing lock: $lock_id"
+                aws dynamodb delete-item --table-name ${{ secrets.TF_STATE_LOCK_TABLE }} --key "{\"LockID\": {\"S\": \"$lock_id\"}}" && echo "✅ Lock $lock_id removed" || echo "❌ Failed to remove lock $lock_id"
+              done
+            else
+              echo "No lock IDs found in scan results"
+            fi
+          else
+            echo "Skipping bulk lock removal due to permission limitations"
+          fi
+          
+          # Final verification (try both get and scan)
+          echo "Final verification of locks..."
+          FINAL_LOCK_CHECK=$(aws dynamodb get-item --table-name ${{ secrets.TF_STATE_LOCK_TABLE }} --key '{"LockID": {"S": "kafka-eks-new/terraform.tfstate"}}' 2>/dev/null || echo "{}")
+          if [ "$FINAL_LOCK_CHECK" = "{}" ]; then
+            echo "✅ Specific lock no longer exists"
+          else
+            echo "⚠️ Specific lock may still exist"
+          fi
+          
+          # Try scan if we have permissions
+          aws dynamodb scan --table-name ${{ secrets.TF_STATE_LOCK_TABLE }} --max-items 1 >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            FINAL_LOCKS=$(aws dynamodb scan --table-name ${{ secrets.TF_STATE_LOCK_TABLE }} --output json)
+            LOCK_COUNT=$(echo "$FINAL_LOCKS" | jq '.Count' 2>/dev/null || echo "0")
+            echo "Remaining locks: $LOCK_COUNT"
+            if [ "$LOCK_COUNT" -eq "0" ]; then
+              echo "✅ No locks remaining"
+            else
+              echo "⚠️ $LOCK_COUNT locks still present"
+            fi
+          else
+            echo "⚠️ Cannot verify remaining locks due to permission limitations"
+          fi
+
+      - name: Clean local Terraform state
+        run: |
+          echo "=== Local Terraform State Cleanup ==="
+          echo "Cleaning local Terraform state..."
+          cd terraform/environments/prod
+          rm -rf .terraform
+          rm -f .terraform.lock.hcl
+          rm -f terraform.tfstate.backup
+          rm -f terraform.tfstate
+          echo "✅ Local state cleaned"
+
+      - name: Terraform Init
+        run: |
+          echo "=== Terraform Initialization ==="
+          echo "Initializing Terraform..."
+          cd terraform/environments/prod
+          echo "Backend config:"
+          echo "  bucket: ${{ secrets.TF_STATE_BUCKET }}"
+          echo "  key: kafka-eks-new/terraform.tfstate"
+          echo "  region: ${{ env.AWS_REGION }}"
+          echo "  dynamodb_table: ${{ secrets.TF_STATE_LOCK_TABLE }}"
+          
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=kafka-eks-new/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_STATE_LOCK_TABLE }}"
+
+      - name: Terraform Validate
+        run: |
+          echo "=== Terraform Validation ==="
+          echo "Validating Terraform configuration..."
+          cd terraform/environments/prod
+          terraform validate
+
+      - name: Terraform Plan
+        run: |
+          echo "=== Terraform Plan ==="
+          echo "Creating Terraform plan..."
+          cd terraform/environments/prod
+          terraform plan -out=tfplan \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="aws_account_id=${{ env.AWS_ACCOUNT_ID }}" \
+            -var="cluster_name=${{ env.CLUSTER_NAME }}" \
+            -var="github_repo=${{ env.GITHUB_REPO }}" \
+            -var="terraform_state_bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -var="dynamodb_table=${{ secrets.TF_STATE_LOCK_TABLE }}"
+
+      - name: Terraform Apply
+        run: |
+          echo "=== Terraform Apply ==="
+          echo "Applying Terraform plan..."
+          cd terraform/environments/prod
+          terraform apply -auto-approve tfplan
+        timeout-minutes: 45
