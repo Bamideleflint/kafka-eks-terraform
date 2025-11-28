@@ -11,7 +11,7 @@ output "github_actions_role_name" {
 
 output "github_oidc_provider_arn" {
   description = "ARN of the GitHub OIDC provider"
-  value       = aws_iam_openid_connect_provider.github.arn
+  value       = local.github_oidc_provider_arn
 }
 
 output "aws_account_id" {

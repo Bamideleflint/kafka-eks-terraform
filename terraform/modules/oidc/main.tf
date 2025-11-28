@@ -1,5 +1,11 @@
-# Create GitHub OIDC provider if it doesn't exist
+# Import existing or create GitHub OIDC provider
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
+}
+
 resource "aws_iam_openid_connect_provider" "github" {
+  count = length(data.aws_iam_openid_connect_provider.github.arn) > 0 ? 0 : 1
+  
   url = "https://token.actions.githubusercontent.com"
 
   client_id_list = [
@@ -16,6 +22,10 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
+locals {
+  github_oidc_provider_arn = try(data.aws_iam_openid_connect_provider.github.arn, aws_iam_openid_connect_provider.github[0].arn)
+}
+
 # Create IAM role for GitHub Actions with the original name
 resource "aws_iam_role" "github_actions" {
   name = "GitHubActionsKafkaDeployRole"
@@ -26,7 +36,7 @@ resource "aws_iam_role" "github_actions" {
       {
         Effect = "Allow"
         Principal = {
-          Federated = aws_iam_openid_connect_provider.github.arn
+          Federated = local.github_oidc_provider_arn
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
@@ -98,7 +108,10 @@ resource "aws_iam_role_policy" "github_actions_permissions" {
           "ec2:DeleteLaunchTemplateVersions",
           "ec2:RunInstances",
           "ec2:TerminateInstances",
-          "ec2:ModifyLaunchTemplate"           // Added to fix the new error
+          "ec2:ModifyLaunchTemplate",          // Added to fix the new error
+          "ec2:DeleteNetworkAclEntry",         // Added for VPC cleanup
+          "ec2:CreateNetworkAclEntry",         // Added for VPC management
+          "ec2:ReplaceNetworkAclEntry"         // Added for VPC management
         ],
         Resource = "*"
       },
