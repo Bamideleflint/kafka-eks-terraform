@@ -65,7 +65,8 @@ This guide helps diagnose and resolve common issues with the Kafka EKS deploymen
 
 2. Update kubeconfig:
    ```bash
-   aws eks update-kubeconfig --name kafka-eks --region us-east-1
+   # Replace YOUR-CLUSTER-NAME and YOUR-REGION with your values
+   aws eks update-kubeconfig --name YOUR-CLUSTER-NAME --region YOUR-REGION
    ```
 
 3. Test connection:
@@ -226,7 +227,8 @@ This guide helps diagnose and resolve common issues with the Kafka EKS deploymen
 
 3. Check security groups:
    ```bash
-   aws ec2 describe-security-groups --filters "Name=tag:Name,Values=kafka-eks*"
+   # Replace YOUR-CLUSTER-NAME with your cluster name
+   aws ec2 describe-security-groups --filters "Name=tag:Name,Values=YOUR-CLUSTER-NAME*"
    ```
 
 ## Monitoring Issues
@@ -259,18 +261,22 @@ This guide helps diagnose and resolve common issues with the Kafka EKS deploymen
 
 **Solution**:
 1. Check GitHub secrets:
-   - AWS_ACCOUNT_ID
-   - TF_STATE_BUCKET
-   - TF_STATE_LOCK_TABLE
+   - TF_STATE_BUCKET (your S3 bucket name)
+   - TF_STATE_LOCK_TABLE (usually `terraform-locks`)
 
 2. Verify IAM role permissions:
    ```bash
-   aws iam list-attached-role-policies --role-name GitHubActionsKafkaDeployRole
+   # Replace YOUR-ROLE-NAME with your GitHub Actions role name (e.g., GitHubActionsKafkaDeployRole)
+   aws iam list-attached-role-policies --role-name YOUR-ROLE-NAME
    ```
 
 3. Test OIDC configuration:
    ```bash
-   aws sts assume-role-with-web-identity --role-arn arn:aws:iam::ACCOUNT_ID:role/GitHubActionsKafkaDeployRole --role-session-name test --web-identity-token TOKEN
+   # Replace ACCOUNT_ID, ROLE_NAME, and TOKEN with your actual values
+   aws sts assume-role-with-web-identity \
+     --role-arn arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME \
+     --role-session-name test \
+     --web-identity-token TOKEN
    ```
 
 ## Performance Issues
@@ -335,7 +341,8 @@ This guide helps diagnose and resolve common issues with the Kafka EKS deploymen
 
 3. Review IAM policies:
    ```bash
-   aws iam list-role-policies --role-name GitHubActionsKafkaDeployRole
+   # Replace YOUR-ROLE-NAME with your GitHub Actions role name
+   aws iam list-role-policies --role-name YOUR-ROLE-NAME
    ```
 
 ## Cleanup Issues
@@ -376,7 +383,8 @@ This guide helps diagnose and resolve common issues with the Kafka EKS deploymen
 
 3. For AWS:
    ```bash
-   aws --debug eks update-kubeconfig --name kafka-eks
+   # Replace YOUR-CLUSTER-NAME with your cluster name
+   aws --debug eks update-kubeconfig --name YOUR-CLUSTER-NAME
    ```
 
 ### Collect Diagnostic Information

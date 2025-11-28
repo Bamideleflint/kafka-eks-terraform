@@ -24,9 +24,9 @@ aws configure
 Or use environment variables:
 
 ```bash
-export AWS_ACCESS_KEY_ID="your-access-key"
-export AWS_SECRET_ACCESS_KEY="your-secret-key"
-export AWS_DEFAULT_REGION="us-east-1"
+export AWS_ACCESS_KEY_ID="YOUR-ACCESS-KEY-HERE"
+export AWS_SECRET_ACCESS_KEY="YOUR-SECRET-KEY-HERE"
+export AWS_DEFAULT_REGION="us-east-1"  # Or your preferred region
 ```
 
 ### 2. Prepare Terraform State Backend
@@ -34,12 +34,13 @@ export AWS_DEFAULT_REGION="us-east-1"
 Create an S3 bucket for state storage and a DynamoDB table for state locking:
 
 ```bash
-# Create S3 bucket
-aws s3 mb s3://my-terraform-state-kafka-eks-12345
+# Create S3 bucket (replace YOUR-UNIQUE-BUCKET-NAME with a unique name)
+# Example: kafka-state-123456789012-us-east-1
+aws s3 mb s3://YOUR-UNIQUE-BUCKET-NAME
 
 # Enable versioning
 aws s3api put-bucket-versioning \
-  --bucket my-terraform-state-kafka-eks-12345 \
+  --bucket YOUR-UNIQUE-BUCKET-NAME \
   --versioning-configuration Status=Enabled
 
 # Create DynamoDB table
@@ -56,18 +57,18 @@ Update `terraform/environments/prod/terraform.tfvars` with your configuration:
 
 ```hcl
 # AWS Configuration
-aws_region = "us-east-1"
+aws_region = "us-east-1"  # Replace with your preferred AWS region
 
 # EKS Cluster Configuration
-cluster_name = "kafka-eks"
+cluster_name = "kafka-eks"  # Replace with your desired cluster name
 
 # Terraform State Configuration
-terraform_state_bucket = "my-terraform-state-kafka-eks-12345"
-dynamodb_table         = "terraform-locks"
+terraform_state_bucket = "YOUR-UNIQUE-BUCKET-NAME"  # S3 bucket from step 2
+dynamodb_table         = "terraform-locks"           # DynamoDB table name
 
-# GitHub Repository for OIDC
-github_repo    = "leketech/kafka-eks-terraform"
-aws_account_id = "907849381252"
+# GitHub Repository for OIDC (format: username/repository-name)
+github_repo    = "YOUR-USERNAME/YOUR-REPO-NAME"  # Your GitHub repository
+aws_account_id = "123456789012"                  # Your 12-digit AWS account ID
 
 ```
 
@@ -85,9 +86,9 @@ Initialize Terraform:
 
 ```bash
 terraform init \
-  -backend-config="bucket=my-terraform-state-kafka-eks-12345" \
+  -backend-config="bucket=YOUR-UNIQUE-BUCKET-NAME" \
   -backend-config="key=kafka-eks/terraform.tfstate" \
-  -backend-config="region=us-east-1" \
+  -backend-config="region=YOUR-REGION" \
   -backend-config="dynamodb_table=terraform-locks"
 ```
 
@@ -108,7 +109,8 @@ terraform apply
 After infrastructure deployment, configure kubectl to access the cluster:
 
 ```bash
-aws eks update-kubeconfig --name kafka-eks --region us-east-1
+# Replace YOUR-CLUSTER-NAME and YOUR-REGION with values from terraform.tfvars
+aws eks update-kubeconfig --name YOUR-CLUSTER-NAME --region YOUR-REGION
 ```
 
 Or use the provided script:
@@ -166,11 +168,10 @@ Or use the verification script:
 
 ### 1. Configure GitHub Secrets
 
-Add the following secrets to your GitHub repository:
+Add the following secrets to your GitHub repository (Settings → Secrets and variables → Actions):
 
-- `AWS_ACCOUNT_ID` - Your AWS account ID
-- `TF_STATE_BUCKET` - S3 bucket name for Terraform state
-- `TF_STATE_LOCK_TABLE` - DynamoDB table name for state locking
+- `TF_STATE_BUCKET` - Your S3 bucket name (from step 2)
+- `TF_STATE_LOCK_TABLE` - Your DynamoDB table name (usually `terraform-locks`)
 
 ### 2. GitHub Actions Workflows
 

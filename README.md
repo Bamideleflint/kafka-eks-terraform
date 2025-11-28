@@ -64,15 +64,10 @@ kafka-eks-terraform/
 
 To use the GitHub Actions workflows, you need to set up the following repository secrets:
 
-1. `TF_STATE_BUCKET` - S3 bucket name for Terraform state (should be set to `my-terraform-state-kafka-eks-12345`)
-2. `TF_STATE_LOCK_TABLE` - DynamoDB table name for state locking (should be set to `terraform-locks`)
+1. `TF_STATE_BUCKET` - S3 bucket name for Terraform state (example: `my-terraform-state-kafka-eks-12345`)
+2. `TF_STATE_LOCK_TABLE` - DynamoDB table name for state locking (recommended: `terraform-locks`)
 
 Make sure these secrets are configured in your GitHub repository settings under "Settings" → "Secrets and variables" → "Actions".
-
-Note: The AWS role ARN has been hardcoded in the workflows for testing purposes. In production, you should use secrets as shown in the previous version.
-
-For testing, the role ARN is currently hardcoded as:
-`arn:aws:iam::907849381252:role/GitHubActionsKafkaDeployRole-bk02fznl`
 
 ### Setting up the secrets:
 
@@ -95,18 +90,36 @@ If you encounter credential errors, verify that:
 2. **Prepare Terraform backend**
    Create an S3 bucket and DynamoDB table for state management:
    ```bash
-   aws s3 mb s3://my-terraform-state-kafka-eks-12345
-   aws s3api put-bucket-versioning --bucket my-terraform-state-kafka-eks-12345 --versioning-configuration Status=Enabled
+   # Replace YOUR-UNIQUE-BUCKET-NAME with a unique name (e.g., kafka-state-ACCOUNT_ID-REGION)
+   aws s3 mb s3://YOUR-UNIQUE-BUCKET-NAME
+   aws s3api put-bucket-versioning --bucket YOUR-UNIQUE-BUCKET-NAME --versioning-configuration Status=Enabled
+   
+   # Create DynamoDB table for state locking
    aws dynamodb create-table --table-name terraform-locks --attribute-definitions AttributeName=LockID,AttributeType=S --key-schema AttributeName=LockID,KeyType=HASH --billing-mode PAY_PER_REQUEST
    ```
 
 3. **Update configuration**
-   Modify `terraform/environments/prod/terraform.tfvars` with your settings.
+   Edit `terraform/environments/prod/terraform.tfvars` and fill in your values:
+   ```hcl
+   aws_region             = "us-east-1"                    # Your AWS region
+   cluster_name           = "kafka-eks"                    # Your desired cluster name
+   terraform_state_bucket = "YOUR-UNIQUE-BUCKET-NAME"      # S3 bucket from step 2
+   dynamodb_table         = "terraform-locks"              # DynamoDB table from step 2
+   github_repo            = "YOUR-USERNAME/YOUR-REPO-NAME" # Your GitHub repo (format: username/repo)
+   aws_account_id         = "123456789012"                 # Your 12-digit AWS account ID
+   ```
 
 4. **Deploy infrastructure**
    ```bash
    cd terraform/environments/prod
-   terraform init -backend-config="bucket=my-terraform-state-kafka-eks-12345" -backend-config="key=kafka-eks/terraform.tfstate" -backend-config="region=us-east-1" -backend-config="dynamodb_table=terraform-locks"
+   
+   # Replace YOUR-UNIQUE-BUCKET-NAME and YOUR-REGION with your values
+   terraform init \
+     -backend-config="bucket=YOUR-UNIQUE-BUCKET-NAME" \
+     -backend-config="key=kafka-eks/terraform.tfstate" \
+     -backend-config="region=YOUR-REGION" \
+     -backend-config="dynamodb_table=terraform-locks"
+   
    terraform plan
    terraform apply
    ```
@@ -119,7 +132,8 @@ If you encounter credential errors, verify that:
 
 6. **Configure kubectl**
    ```bash
-   aws eks update-kubeconfig --name kafka-eks --region us-east-1
+   # Replace YOUR-CLUSTER-NAME and YOUR-REGION with your values from terraform.tfvars
+   aws eks update-kubeconfig --name YOUR-CLUSTER-NAME --region YOUR-REGION
    ```
 
 7. **Deploy Kafka**
