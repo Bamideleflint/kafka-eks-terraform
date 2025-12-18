@@ -96,6 +96,17 @@ jobs:
           aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN" 2>/dev/null || true
           echo "✅ OIDC provider cleanup step completed"
 
+      - name: Pre-clean existing GitHubActions role
+        run: |
+          echo "=== GitHubActions Role Pre-Cleanup ==="
+          ROLE_NAME="GitHubActionsKafkaDeployRole"
+          POLICY_NAME="terraform-kafka-permissions"
+          echo "Deleting inline policy if present: $POLICY_NAME"
+          aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$POLICY_NAME" 2>/dev/null || true
+          echo "Deleting role if present: $ROLE_NAME"
+          aws iam delete-role --role-name "$ROLE_NAME" 2>/dev/null || true
+          echo "✅ Role cleanup step completed"
+
       - name: Debug - Backend Resources Verification
         run: |
           echo "=== Backend Resources Verification ==="
