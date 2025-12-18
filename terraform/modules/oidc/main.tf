@@ -44,6 +44,12 @@ resource "aws_iam_role" "github_actions" {
       }
     ]
   })
+
+  force_detach_policies = true
+
+  lifecycle {
+    create_before_destroy = false
+  }
 }
 
 # Attach permissions required by Terraform to deploy EKS + networking + state backend
