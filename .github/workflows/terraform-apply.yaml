@@ -88,14 +88,6 @@ jobs:
             exit 1
           fi
 
-      - name: Pre-clean existing GitHub OIDC provider
-        run: |
-          echo "=== OIDC Provider Pre-Cleanup ==="
-          OIDC_ARN="arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:oidc-provider/token.actions.githubusercontent.com"
-          echo "Deleting OIDC provider if it exists: $OIDC_ARN"
-          aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN" 2>/dev/null || true
-          echo "✅ OIDC provider cleanup step completed"
-
       - name: Pre-clean existing GitHubActions role
         run: |
           echo "=== GitHubActions Role Pre-Cleanup ==="
