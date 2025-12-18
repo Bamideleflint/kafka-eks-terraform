@@ -172,8 +172,21 @@ jobs:
           # Apply Strimzi Kafka cluster
           kubectl apply -f kubernetes/kafka/strimzi/
 
-          # Apply monitoring
-          kubectl apply -f kubernetes/monitoring/
+          # Apply monitoring: exporter first (always safe)
+          if [ -f kubernetes/monitoring/kafka-exporter.yaml ]; then
+            kubectl apply -f kubernetes/monitoring/kafka-exporter.yaml
+          fi
+
+          # Apply ServiceMonitor only if CRD exists
+          if kubectl get crd servicemonitors.monitoring.coreos.com >/dev/null 2>&1; then
+            echo "ServiceMonitor CRD found. Applying ServiceMonitor."
+            if [ -f kubernetes/monitoring/servicemonitor.yaml ]; then
+              kubectl apply -f kubernetes/monitoring/servicemonitor.yaml
+            fi
+          else
+            echo "ServiceMonitor CRD not found. Skipping ServiceMonitor apply."
+            echo "To enable, install Prometheus Operator (e.g., kube-prometheus-stack)."
+          fi
 
       - name: Output Kafka Services
         run: |
