@@ -76,18 +76,6 @@ jobs:
             exit 1
           fi
 
-      - name: Check Role Existence
-        run: |
-          echo "=== Role Existence Check ==="
-          echo "Checking if role exists..."
-          aws iam get-role --role-name GitHubActionsKafkaDeployRole
-          if [ $? -eq 0 ]; then
-            echo "✅ Role exists"
-          else
-            echo "❌ Role does not exist or cannot be accessed"
-            exit 1
-          fi
-
       - name: Pre-clean existing GitHubActions role
         run: |
           echo "=== GitHubActions Role Pre-Cleanup ==="
