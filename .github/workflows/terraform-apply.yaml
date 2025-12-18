@@ -135,6 +135,7 @@ jobs:
 
       - name: Enhanced Terraform Lock Cleanup
         run: |
+          set +e
           echo "=== Enhanced Terraform Lock Cleanup ==="
           echo "Checking for Terraform locks..."
           
@@ -204,6 +205,9 @@ jobs:
           else
             echo "⚠️ Cannot verify remaining locks due to permission limitations"
           fi
+
+          # Always continue; this is best-effort hygiene
+          exit 0
 
       - name: Clean local Terraform state
         run: |
