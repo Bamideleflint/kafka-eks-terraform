@@ -204,13 +204,13 @@ jobs:
           cd terraform/environments/prod
           echo "Backend config:"
           echo "  bucket: ${{ secrets.TF_STATE_BUCKET }}"
-          echo "  key: kafka-eks-new/terraform.tfstate"
+          echo "  key: prod/terraform.tfstate"
           echo "  region: ${{ env.AWS_REGION }}"
           echo "  dynamodb_table: ${{ secrets.TF_STATE_LOCK_TABLE }}"
           
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=kafka-eks-new/terraform.tfstate" \
+            -backend-config="key=prod/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION }}" \
             -backend-config="dynamodb_table=${{ secrets.TF_STATE_LOCK_TABLE }}"
 
