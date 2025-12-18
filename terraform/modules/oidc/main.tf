@@ -1,11 +1,5 @@
-# Import existing or create GitHub OIDC provider
-data "aws_iam_openid_connect_provider" "github" {
-  url = "https://token.actions.githubusercontent.com"
-}
-
+# Create GitHub OIDC provider
 resource "aws_iam_openid_connect_provider" "github" {
-  count = length(data.aws_iam_openid_connect_provider.github.arn) > 0 ? 0 : 1
-  
   url = "https://token.actions.githubusercontent.com"
 
   client_id_list = [
@@ -23,7 +17,7 @@ resource "aws_iam_openid_connect_provider" "github" {
 }
 
 locals {
-  github_oidc_provider_arn = try(data.aws_iam_openid_connect_provider.github.arn, aws_iam_openid_connect_provider.github[0].arn)
+  github_oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
 }
 
 # Create IAM role for GitHub Actions with the original name
