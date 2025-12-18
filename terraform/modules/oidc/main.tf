@@ -170,6 +170,8 @@ resource "aws_iam_role_policy" "github_actions_permissions" {
       {
         Effect = "Allow",
         Action = [
+          "s3:CreateBucket",
+          "s3:PutBucketVersioning",
           "s3:GetObject",
           "s3:GetObjectVersion",
           "s3:PutObject",
