@@ -116,7 +116,7 @@ If you encounter credential errors, verify that:
    # Replace YOUR-UNIQUE-BUCKET-NAME and YOUR-REGION with your values
    terraform init \
      -backend-config="bucket=YOUR-UNIQUE-BUCKET-NAME" \
-     -backend-config="key=kafka-eks/terraform.tfstate" \
+       -backend-config="key=prod/terraform.tfstate" \
      -backend-config="region=YOUR-REGION" \
      -backend-config="dynamodb_table=terraform-locks"
    
