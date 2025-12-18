@@ -30,8 +30,8 @@ metadata:
     strimzi.io/node-pools: enabled
 spec:
   kafka:
-    version: 4.1.1
-    metadataVersion: 4.1-IV0
+    version: 3.7.0
+    replicas: 3
     listeners:
       - name: plain
         port: 9092
@@ -51,6 +51,13 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
+    storage:
+      type: jbod
+      volumes:
+        - id: 0
+          type: persistent-claim
+          size: 10Gi
+          deleteClaim: false
   entityOperator:
     topicOperator: {}
     userOperator: {}
