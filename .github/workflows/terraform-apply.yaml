@@ -10,7 +10,7 @@ env:
   TF_VERSION: "1.9.0"
   AWS_REGION: "us-east-1"
   AWS_ACCOUNT_ID: "248982879830"
-  CLUSTER_NAME: "kafka-eks-new-1"
+  CLUSTER_NAME: "kafka-eks"
   GITHUB_REPO: "Bamideleflint/kafka-eks-terraform"
 
 jobs:
