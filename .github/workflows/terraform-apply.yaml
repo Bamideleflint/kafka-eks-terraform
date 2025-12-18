@@ -76,17 +76,6 @@ jobs:
             exit 1
           fi
 
-      - name: Pre-clean existing GitHubActions role
-        run: |
-          echo "=== GitHubActions Role Pre-Cleanup ==="
-          ROLE_NAME="GitHubActionsKafkaDeployRole"
-          POLICY_NAME="terraform-kafka-permissions"
-          echo "Deleting inline policy if present: $POLICY_NAME"
-          aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$POLICY_NAME" 2>/dev/null || true
-          echo "Deleting role if present: $ROLE_NAME"
-          aws iam delete-role --role-name "$ROLE_NAME" 2>/dev/null || true
-          echo "✅ Role cleanup step completed"
-
       - name: Ensure backend resources (S3/DynamoDB)
         run: |
           set -e
