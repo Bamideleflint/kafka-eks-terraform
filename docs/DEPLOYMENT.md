@@ -1,17 +1,24 @@
-# Deployment Guide
+# Deployment Guide - Kafka on EKS
 
-This guide explains how to deploy the Kafka EKS solution.
+Complete step-by-step guide for deploying Apache Kafka on Amazon EKS using Terraform and Strimzi.
 
 ## Prerequisites
 
-Before deploying, ensure you have:
+- AWS Account with appropriate permissions
+- AWS CLI installed and configured
+- Terraform >= 1.6 installed
+- kubectl installed  
+- Git for version control
 
-1. **AWS Account** with appropriate permissions
-2. **AWS CLI** installed and configured
-3. **Terraform** (>= 1.6) installed
-4. **kubectl** installed
-5. **Helm** (optional, for alternative deployments)
-6. **GitHub Repository** for CI/CD
+## Table of Contents
+
+1. [Initial Setup](#initial-setup)
+2. [Infrastructure Deployment](#infrastructure-deployment)
+3. [Kafka Deployment](#kafka-deployment)
+4. [Verification](#verification)
+5. [Post-Deployment](#post-deployment)
+6. [GitHub Actions Setup](#github-actions-setup-optional)
+7. [Cleanup](#cleanup)
 
 ## Initial Setup
 
@@ -22,25 +29,30 @@ aws configure
 ```
 
 Or use environment variables:
-
 ```bash
-export AWS_ACCESS_KEY_ID="YOUR-ACCESS-KEY-HERE"
-export AWS_SECRET_ACCESS_KEY="YOUR-SECRET-KEY-HERE"
-export AWS_DEFAULT_REGION="us-east-1"  # Or your preferred region
+export AWS_ACCESS_KEY_ID="YOUR-ACCESS-KEY"
+export AWS_SECRET_ACCESS_KEY="YOUR-SECRET-KEY"
+export AWS_DEFAULT_REGION="us-east-1"
 ```
 
 ### 2. Prepare Terraform State Backend
 
-Create an S3 bucket for state storage and a DynamoDB table for state locking:
+Create S3 bucket and DynamoDB table:
 
 ```bash
-# Create S3 bucket (replace YOUR-UNIQUE-BUCKET-NAME with a unique name)
-# Example: kafka-state-123456789012-us-east-1
-aws s3 mb s3://YOUR-UNIQUE-BUCKET-NAME
+# Get your AWS account ID
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+REGION="us-east-1"
+
+# Create unique bucket name
+BUCKET="kafka-eks-terraform-state-${ACCOUNT_ID}-${REGION}"
+
+# Create S3 bucket
+aws s3 mb s3://${BUCKET} --region ${REGION}
 
 # Enable versioning
 aws s3api put-bucket-versioning \
-  --bucket YOUR-UNIQUE-BUCKET-NAME \
+  --bucket ${BUCKET} \
   --versioning-configuration Status=Enabled
 
 # Create DynamoDB table
@@ -48,213 +60,367 @@ aws dynamodb create-table \
   --table-name terraform-locks \
   --attribute-definitions AttributeName=LockID,AttributeType=S \
   --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST
+  --billing-mode PAY_PER_REQUEST \
+  --region ${REGION}
 ```
 
 ### 3. Configure Variables
 
-Update `terraform/environments/prod/terraform.tfvars` with your configuration:
+Update `terraform/environments/prod/terraform.tfvars`:
 
 ```hcl
-# AWS Configuration
-aws_region = "us-east-1"  # Replace with your preferred AWS region
-
-# EKS Cluster Configuration
-cluster_name = "kafka-eks"  # Replace with your desired cluster name
-
-# Terraform State Configuration
-terraform_state_bucket = "YOUR-UNIQUE-BUCKET-NAME"  # S3 bucket from step 2
-dynamodb_table         = "terraform-locks"           # DynamoDB table name
-
-# GitHub Repository for OIDC (format: username/repository-name)
-github_repo    = "YOUR-USERNAME/YOUR-REPO-NAME"  # Your GitHub repository
-aws_account_id = "123456789012"                  # Your 12-digit AWS account ID
-
+aws_region             = "us-east-1"
+cluster_name           = "kafka-eks"
+terraform_state_bucket = "kafka-eks-terraform-state-123456789012-us-east-1"
+dynamodb_table         = "terraform-locks"
+github_repo            = "yourusername/kafka-eks-terraform"
+aws_account_id         = "123456789012"
 ```
 
-## Deployment Process
+## Infrastructure Deployment
 
-### 1. Deploy Infrastructure
-
-Navigate to the production environment directory:
+### 1. Deploy with Terraform
 
 ```bash
 cd terraform/environments/prod
-```
 
-Initialize Terraform:
+# Initialize Terraform
+terraform init
 
-```bash
-terraform init \
-  -backend-config="bucket=YOUR-UNIQUE-BUCKET-NAME" \
-  -backend-config="key=kafka-eks/terraform.tfstate" \
-  -backend-config="region=YOUR-REGION" \
-  -backend-config="dynamodb_table=terraform-locks"
-```
-
-Review the execution plan:
-
-```bash
+# Review plan
 terraform plan
+
+# Apply infrastructure
+terraform apply
 ```
 
-Apply the configuration:
+**Expected output:**
+```
+Apply complete! Resources: 45 added, 0 changed, 0 destroyed.
 
-```bash
-terraform apply
+Outputs:
+cluster_endpoint = "https://XXXXX.gr7.us-east-1.eks.amazonaws.com"
+cluster_name = "kafka-eks"
+github_actions_role_arn = "arn:aws:iam::123456789012:role/GitHubActionsKafkaDeployRole"
 ```
 
 ### 2. Configure kubectl
 
-After infrastructure deployment, configure kubectl to access the cluster:
-
 ```bash
-# Replace YOUR-CLUSTER-NAME and YOUR-REGION with values from terraform.tfvars
-aws eks update-kubeconfig --name YOUR-CLUSTER-NAME --region YOUR-REGION
+aws eks update-kubeconfig --name kafka-eks --region us-east-1
 ```
 
-Or use the provided script:
-
+Verify cluster access:
 ```bash
-./scripts/setup-kubectl.sh
+kubectl get nodes
 ```
 
-### 3. Deploy Kafka Resources
+**Expected output:**
+```
+NAME                         STATUS   ROLES    AGE   VERSION
+ip-10-0-1-92.ec2.internal    Ready    <none>   5m    v1.32.0-eks-a371706
+ip-10-0-2-157.ec2.internal   Ready    <none>   5m    v1.32.0-eks-a371706
+ip-10-0-3-242.ec2.internal   Ready    <none>   5m    v1.32.0-eks-a371706
+```
 
-Apply the Kubernetes manifests:
+### 3. Grant IAM User Access (If Needed)
+
+If using an IAM user different from the cluster creator:
+
+```bash
+# Get your IAM user ARN
+IAM_USER=$(aws sts get-caller-identity --query Arn --output text)
+
+# Create access entry
+aws eks create-access-entry \
+  --cluster-name kafka-eks \
+  --principal-arn ${IAM_USER} \
+  --type STANDARD \
+  --region us-east-1
+
+# Grant admin access
+aws eks associate-access-policy \
+  --cluster-name kafka-eks \
+  --principal-arn ${IAM_USER} \
+  --access-scope type=cluster \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+  --region us-east-1
+```
+
+## Kafka Deployment
+
+### 1. Install Strimzi Operator
 
 ```bash
 # Create namespace
-kubectl apply -f kubernetes/namespaces/
+kubectl create namespace kafka
 
-# Apply storage class
-kubectl apply -f kubernetes/storage/
+# Install Strimzi operator
+kubectl create -f 'https://strimzi.io/install/latest?namespace=kafka' -n kafka
 
-# Apply Zookeeper manifests
-kubectl apply -f kubernetes/kafka/zookeeper/
-
-# Apply Kafka manifests
-kubectl apply -f kubernetes/kafka/broker/
-
-# Apply monitoring
-kubectl apply -f kubernetes/monitoring/
+# Wait for operator to be ready
+kubectl get pods -n kafka -w
 ```
 
-### 4. Verify Deployment
-
-Check the status of resources:
-
-```bash
-# Check nodes
-kubectl get nodes
-
-# Check Zookeeper pods
-kubectl get pods -n kafka -l app=zookeeper
-
-# Check Kafka pods
-kubectl get pods -n kafka -l app=kafka
-
-# Check services
-kubectl get svc -n kafka
+Wait until you see:
+```
+NAME                                        READY   STATUS    RESTARTS   AGE
+strimzi-cluster-operator-74f587697c-xxxxx   1/1     Running   0          1m
 ```
 
-Or use the verification script:
+Press `Ctrl+C` to exit watch mode.
+
+### 2. Deploy Kafka Cluster
 
 ```bash
-./scripts/verify-kafka.sh
+kubectl apply -f kubernetes/kafka/strimzi/kafka-cluster.yaml
 ```
 
-## CI/CD Setup
+Monitor deployment:
+```bash
+kubectl get pods -n kafka -w
+```
 
-### 1. Configure GitHub Secrets
+Wait for all pods to be Running (this takes 3-5 minutes):
+```
+NAME                                        READY   STATUS    RESTARTS   AGE
+kafka-entity-operator-xxxxxxxxxx-xxxxx     2/2     Running   0          3m
+kafka-kafka-0                              1/1     Running   0          4m
+kafka-kafka-1                              1/1     Running   0          4m
+kafka-kafka-2                              1/1     Running   0          4m
+kafka-zookeeper-0                          1/1     Running   0          5m
+kafka-zookeeper-1                          1/1     Running   0          5m
+kafka-zookeeper-2                          1/1     Running   0          5m
+strimzi-cluster-operator-74f587697c-xxxxx  1/1     Running   0          10m
+```
 
-Add the following secrets to your GitHub repository (Settings → Secrets and variables → Actions):
-
-- `TF_STATE_BUCKET` - Your S3 bucket name (from step 2)
-- `TF_STATE_LOCK_TABLE` - Your DynamoDB table name (usually `terraform-locks`)
-
-### 2. GitHub Actions Workflows
-
-The repository includes three workflows:
-
-1. **Terraform Plan** - Runs on pull requests to validate changes
-2. **Terraform Apply** - Runs on push to main to deploy infrastructure
-3. **Kafka Deploy** - Runs after successful Terraform Apply to deploy Kafka
-
-## Monitoring and Operations
-
-### Accessing Metrics
-
-The Kafka Exporter exposes metrics on port 9308:
+### 3. Deploy Monitoring
 
 ```bash
-# Port forward to access metrics
+kubectl apply -f kubernetes/monitoring/kafka-exporter.yaml
+```
+
+Verify:
+```bash
+kubectl get pods -n kafka | grep kafka-exporter
+```
+
+## Verification
+
+### 1. Check Kafka Cluster Status
+
+```bash
+kubectl get kafka -n kafka
+```
+
+**Expected:**
+```
+NAME    DESIRED KAFKA REPLICAS   DESIRED ZK REPLICAS   READY   WARNINGS
+kafka   3                        3                     True
+```
+
+### 2. Create Test Topic
+
+```bash
+kubectl exec -it kafka-kafka-0 -n kafka -- bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --create --topic demo-topic \
+  --partitions 3 --replication-factor 3
+```
+
+### 3. List Topics
+
+```bash
+kubectl exec -it kafka-kafka-0 -n kafka -- bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --list
+```
+
+### 4. Describe Topic
+
+```bash
+kubectl exec -it kafka-kafka-0 -n kafka -- bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --describe --topic demo-topic
+```
+
+**Expected:**
+```
+Topic: demo-topic       PartitionCount: 3       ReplicationFactor: 3
+        Topic: demo-topic       Partition: 0    Leader: 2       Replicas: 2,1,0 Isr: 2,1,0
+        Topic: demo-topic       Partition: 1    Leader: 1       Replicas: 1,0,2 Isr: 1,0,2
+        Topic: demo-topic       Partition: 2    Leader: 0       Replicas: 0,2,1 Isr: 0,2,1
+```
+
+## Post-Deployment
+
+### Get External Endpoints
+
+Retrieve LoadBalancer endpoints:
+
+```bash
+kubectl get svc -n kafka | grep LoadBalancer
+```
+
+Get bootstrap server:
+```bash
+kubectl get svc kafka-kafka-external-bootstrap -n kafka \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+echo ":9094"
+```
+
+### Access Methods
+
+**Internal (within Kubernetes):**
+```
+kafka-kafka-bootstrap.kafka.svc:9092
+```
+
+**External (from outside):**
+```
+<loadbalancer-endpoint>:9094
+```
+
+### Test with Examples
+
+#### Python Example
+
+```bash
+cd examples/python
+pip install -r requirements.txt
+
+# Terminal 1: Start consumer
+python consumer.py
+
+# Terminal 2: Start producer
+python producer.py
+```
+
+#### Node.js Example
+
+```bash
+cd examples/nodejs
+npm install
+
+# Terminal 1: Start consumer
+node consumer.js
+
+# Terminal 2: Start producer
+node producer.js
+```
+
+#### Shell Script Example
+
+```bash
+cd examples/shell
+
+# Terminal 1: Start consumer
+./consumer.sh
+
+# Terminal 2: Send message
+./producer.sh "Hello from Kafka!"
+```
+
+### Monitor Metrics
+
+Access Kafka metrics:
+
+```bash
 kubectl port-forward svc/kafka-exporter -n kafka 9308:9308
 ```
 
-Metrics will be available at `http://localhost:9308/metrics`
+Visit http://localhost:9308/metrics
 
-### Scaling Kafka
+## GitHub Actions Setup (Optional)
 
-To scale the number of Kafka brokers:
+### 1. Set Repository Secrets
 
-1. Update the replica count in `kubernetes/kafka/broker/statefulset.yaml`
-2. Apply the changes:
+In your GitHub repository:
+- Navigate to Settings → Secrets and variables → Actions
+- Add secrets:
+  - `TF_STATE_BUCKET`: Your S3 bucket name
+  - `TF_STATE_LOCK_TABLE`: terraform-locks
 
-```bash
-kubectl apply -f kubernetes/kafka/broker/statefulset.yaml
-```
+### 2. Verify Workflows
 
-### Upgrading Kafka
+The repository includes workflows for:
+- **terraform-apply.yaml**: Deploy infrastructure on push to main
+- **kafka-deploy.yaml**: Deploy Kafka resources
 
-To upgrade Kafka:
-
-1. Update the image tag in `kubernetes/kafka/broker/statefulset.yaml`
-2. Apply the changes:
-
-```bash
-kubectl apply -f kubernetes/kafka/broker/statefulset.yaml
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Terraform State Locking**
-   - If state is locked, check for running operations
-   - Release lock if needed: `terraform force-unlock LOCK_ID`
-
-2. **Kubernetes Connection**
-   - Verify AWS credentials: `aws sts get-caller-identity`
-   - Update kubeconfig: `aws eks update-kubeconfig --name kafka-eks`
-
-3. **Pods Not Starting**
-   - Check pod status: `kubectl describe pod -n kafka POD_NAME`
-   - Check logs: `kubectl logs -n kafka POD_NAME`
-
-### Cleaning Up
-
-To remove all resources:
-
-1. Delete Kubernetes resources:
+### 3. Trigger Deployment
 
 ```bash
-./scripts/cleanup.sh -y
+git add .
+git commit -m "Deploy Kafka infrastructure"
+git push origin main
 ```
 
-2. Destroy Terraform infrastructure:
+GitHub Actions will automatically deploy changes.
+
+## Cleanup
+
+### 1. Delete Kafka Resources
+
+```bash
+kubectl delete -f kubernetes/monitoring/kafka-exporter.yaml
+kubectl delete -f kubernetes/kafka/strimzi/kafka-cluster.yaml
+kubectl delete namespace kafka
+```
+
+### 2. Destroy Infrastructure
 
 ```bash
 cd terraform/environments/prod
 terraform destroy
 ```
 
-3. Clean up S3 bucket and DynamoDB table:
+### 3. Clean Backend Resources (Optional)
 
 ```bash
 # Delete DynamoDB table
 aws dynamodb delete-table --table-name terraform-locks
 
-# Delete S3 bucket (ensure it's empty first)
-aws s3 rb s3://my-terraform-state-kafka-eks-12345 --force
+# Empty and delete S3 bucket
+aws s3 rm s3://YOUR-BUCKET-NAME --recursive
+aws s3 rb s3://YOUR-BUCKET-NAME
 ```
+
+## Troubleshooting
+
+### Pods Stuck in ContainerCreating
+
+```bash
+kubectl describe pod <pod-name> -n kafka
+```
+
+Check events section for errors.
+
+### Kafka Version Mismatch
+
+Strimzi 0.39.0 supports Kafka versions: 3.5.0, 3.5.1, 3.5.2, 3.6.0, 3.6.1
+
+Update `kubernetes/kafka/strimzi/kafka-cluster.yaml` if needed.
+
+### LoadBalancer Pending
+
+```bash
+kubectl describe svc kafka-kafka-external-bootstrap -n kafka
+```
+
+Check AWS LoadBalancer controller and security groups.
+
+### IAM Access Denied
+
+Ensure IAM user has EKS access entry:
+
+```bash
+aws eks list-access-entries --cluster-name kafka-eks --region us-east-1
+```
+
+For more issues, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+## Next Steps
+
+- [Architecture Overview](ARCHITECTURE.md)
+- [Troubleshooting Guide](TROUBLESHOOTING.md)
+- [Producer/Consumer Examples](../examples/README.md)

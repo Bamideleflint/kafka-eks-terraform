@@ -184,6 +184,62 @@ Metrics are exposed via Kafka Exporter on port 9308. Access them with:
 kubectl port-forward svc/kafka-exporter -n kafka 9308:9308
 ```
 Then visit `http://localhost:9308/metrics`
+## Kafka Cluster Access
+
+### Internal Access (within Kubernetes)
+
+For applications running inside the Kubernetes cluster:
+```
+Bootstrap Server: kafka-kafka-bootstrap.kafka.svc:9092
+```
+
+### External Access (from outside Kubernetes)
+
+After deployment, Kafka brokers are exposed via AWS LoadBalancers:
+
+**Bootstrap Server:**
+```
+a9ddef2a479e44ceb82af592f804395b-77059609.us-east-1.elb.amazonaws.com:9094
+```
+
+**Individual Brokers:**
+- Broker 0: `ae4b630fe59584eeb9d9a7ff468a7318-1279740386.us-east-1.elb.amazonaws.com:9094`
+- Broker 1: `a72ac88081ccb4449b41a1c38282b3fc-1111741370.us-east-1.elb.amazonaws.com:9094`
+- Broker 2: `ab7d1a2e412604929831ee0ba317e675-1769824911.us-east-1.elb.amazonaws.com:9094`
+
+**Get your endpoints:**
+```bash
+kubectl get svc -n kafka | grep LoadBalancer
+```
+
+### Quick Test
+
+Create a topic:
+```bash
+kubectl exec -it kafka-kafka-0 -n kafka -- bin/kafka-topics.sh \
+   --bootstrap-server localhost:9092 \
+   --create --topic test-topic \
+   --partitions 3 --replication-factor 3
+```
+
+List topics:
+```bash
+kubectl exec -it kafka-kafka-0 -n kafka -- bin/kafka-topics.sh \
+   --bootstrap-server localhost:9092 \
+   --list
+```
+
+Describe a topic:
+```bash
+kubectl exec -it kafka-kafka-0 -n kafka -- bin/kafka-topics.sh \
+   --bootstrap-server localhost:9092 \
+   --describe --topic test-topic
+```
+
+### Producer/Consumer Examples
+
+See [examples/](examples/) directory for detailed producer and consumer code examples in multiple languages.
+
 
 ## Troubleshooting
 

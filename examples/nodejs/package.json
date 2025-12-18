@@ -1,0 +1,13 @@
+{
+  "name": "kafka-nodejs-examples",
+  "version": "1.0.0",
+  "description": "Kafka producer and consumer examples using Node.js",
+  "main": "index.js",
+  "scripts": {
+    "producer": "node producer.js",
+    "consumer": "node consumer.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4"
+  }
+}

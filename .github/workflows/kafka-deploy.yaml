@@ -134,24 +134,29 @@ jobs:
             exit 1
           fi
 
-      - name: Check and Set Default Storage Class
+      - name: Ensure Default Storage Class (non-fatal)
         run: |
+          set +e
           echo "Available Storage Classes:"
-          kubectl get storageclass
+          kubectl get storageclass || true
 
-          # Check if there's already a default storage class
-          default_sc=$(kubectl get storageclass | grep "(default)" | awk '{print $1}')
-          if [ -n "$default_sc" ]; then
-            echo "Default storage class already exists: $default_sc"
-            if [ "$default_sc" != "gp2" ]; then
-              echo "Removing default annotation from $default_sc"
-              kubectl patch storageclass $default_sc -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
-            fi
+          # If a default storage class already exists, keep it
+          current_default=$(kubectl get storageclass 2>/dev/null | grep "(default)" | awk '{print $1}')
+          if [ -n "$current_default" ]; then
+            echo "Default storage class detected: $current_default (leaving as-is)"
+            exit 0
           fi
 
-          # Set gp2 as the default storage class
-          echo "Setting gp2 as default storage class"
-          kubectl patch storageclass gp2 -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+          # Prefer gp3, then gp2, else skip
+          if kubectl get storageclass gp3 >/dev/null 2>&1; then
+            echo "Setting gp3 as default storage class"
+            kubectl patch storageclass gp3 -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class":"true"}}}' || true
+          elif kubectl get storageclass gp2 >/dev/null 2>&1; then
+            echo "Setting gp2 as default storage class"
+            kubectl patch storageclass gp2 -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class":"true"}}}' || true
+          else
+            echo "No gp3/gp2 storage class found. Proceeding without setting a default."
+          fi
 
       - name: Apply Kubernetes manifests
         run: |
@@ -169,6 +174,11 @@ jobs:
 
           # Apply monitoring
           kubectl apply -f kubernetes/monitoring/
+
+      - name: Output Kafka Services
+        run: |
+          echo "Kafka services (for connectivity/reference):"
+          kubectl get svc -n kafka -o wide || true
 
       - name: Debug - Check PVC Status
         run: |
@@ -208,3 +218,11 @@ jobs:
             kubectl describe pods -n kafka
             exit 1
           fi
+
+      - name: Final Status
+        if: ${{ success() }}
+        run: |
+          echo "✅ Kafka deployment completed. Summary:"
+          kubectl get kafka -n kafka || true
+          kubectl get pods -n kafka || true
+          kubectl get svc -n kafka || true
